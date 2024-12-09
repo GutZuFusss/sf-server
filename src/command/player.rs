@@ -1,11 +1,11 @@
-use std::fmt::Write;
+use std::{borrow::BorrowMut, fmt::Write, ptr::{null, null_mut}, vec};
 
 use fastrand::Rng;
 use log::error;
 use num_traits::FromPrimitive;
+use enum_map::EnumMap;
 use sf_api::{
-    gamestate::character::{Gender, Race},
-    misc::from_sf_string,
+    command::AttributeType, gamestate::character::{Class, Gender, Race}, misc::from_sf_string, simulate::{Battle, BattleFighter, BattleSide, ClassEffect, Element, EquipmentEffects}
 };
 use sqlx::Sqlite;
 
@@ -797,6 +797,8 @@ pub(crate) async fn player_arena_fight(
 
     let starting_hp = 10_000;
 
+    let mut battle_fighters = Vec::with_capacity(2);
+
     for pid in fighters {
         let fighter = sqlx::query!(
             "SELECT name, portrait.*, a.*, level, class, race, gender
@@ -850,46 +852,105 @@ pub(crate) async fn player_arena_fight(
         for _ in 0..12 {
             resp.add_val(0);
         }
+
+        let mut our_attributes: EnumMap<AttributeType, u32> = EnumMap::default();
+        our_attributes[AttributeType::Strength] = fighter.strength as u32;
+        our_attributes[AttributeType::Dexterity] = fighter.dexterity as u32;
+        our_attributes[AttributeType::Intelligence] = fighter.intelligence as u32;
+        our_attributes[AttributeType::Constitution] = fighter.stamina as u32;
+        our_attributes[AttributeType::Luck] = fighter.luck as u32;
+
+        let our_weapon = (100, 200);
+        let our_equip = EquipmentEffects {
+            element_res: EnumMap::default(),
+            element_dmg: EnumMap::default(),
+            weapon: our_weapon,
+            offhand: (0, 0),
+            reaction_boost: false,
+            extra_crit_dmg: false,
+            armor: 0,
+        };
+        let our_fighter = BattleFighter {
+            level: fighter.level as u16,
+            is_companion: false,
+            class: Class::from_i64(fighter.class).unwrap(),
+            attributes: our_attributes,
+            max_hp: starting_hp,
+            current_hp: starting_hp,
+            equip: our_equip,
+            rounds_in_battle: 0,
+            class_effect: ClassEffect::Normal,
+            portal_dmg_bonus: 1.0,
+        };
+
+        battle_fighters.push(our_fighter);
     }
 
     resp.add_key("fight.r");
 
-    let mut player_a_hp = starting_hp;
-    let mut player_b_hp = starting_hp;
-
-    let mut rng = fastrand::Rng::new();
-    for round in 0.. {
-        let (pid, our_hp, enemy_hp) = if round % 2 == 0 {
-            (fighters[0], &mut player_a_hp, &mut player_b_hp)
+    let bf1 = battle_fighters.get(0).unwrap().clone();
+    let bf2 = battle_fighters.get(1).unwrap().clone();
+    let mut bf_left = [bf1];
+    let mut bf_right = [bf2];
+    
+    let mut battle = Battle::new(&mut bf_left, &mut bf_right);
+    battle.simulate_turn(&mut ()); // first turn hits the air for some reason
+    loop {
+        battle.simulate_turn(&mut ());
+        // TODO: remove this. hack to avoid a friendly fire round
+        battle.round += if battle.round == 2 && battle.started.unwrap() == BattleSide::Left {
+            1
         } else {
-            (fighters[1], &mut player_b_hp, &mut player_a_hp)
+            0
         };
-        *enemy_hp -= rng.i32(2_000..=4_000);
-        resp.add_val(pid);
+        let right_hp = match battle.right.current() {
+            Some(f) => f.current_hp,
+            None => 0,
+        };
+        let left_hp = match battle.left.current() {
+            Some(f) => f.current_hp,
+            None => 0,
+        };
+        resp.add_val(fighters[(battle.round % 2) as usize]);
         resp.add_val(0);
-        resp.add_val(1); // Attack type (weapon, catapult, etc.)
+        resp.add_val(0); // Attack type (normal=0, crit=1, catapult, etc.)
         resp.add_val(0); // Enemy reaction (repelled/dodged)
         resp.add_val(0);
-        resp.add_val(*our_hp);
-        resp.add_val(*enemy_hp);
+        if battle.round % 2 == 0 {
+            resp.add_val(left_hp);
+            resp.add_val(right_hp);
+        } else {
+            resp.add_val(right_hp);
+            resp.add_val(left_hp);
+        }
         resp.add_val(0);
         resp.add_val(0);
-        if player_a_hp <= 0 || player_b_hp <= 0 {
+        if left_hp <= 0 || right_hp <= 0 {
             break;
         }
     }
+
+    let left_hp = match battle.left.current() {
+        Some(f) => f.current_hp,
+        None => 0,
+    };
+
     resp.add_key("winnerid");
-    resp.add_val(if player_a_hp > 0 {
+    resp.add_val(if left_hp > 0 {
         fighters[0]
     } else {
         fighters[1]
     });
     resp.add_key("fightresult.battlereward");
-    resp.add_val((player_a_hp > 0) as i32); // have we won?
+    resp.add_val((left_hp > 0) as i32); // have we won?
     resp.add_val(1);
     resp.add_val(0); // silver
-    resp.add_val(1000); // xp won
-    resp.add_val(100); // mushrooms
+    resp.add_val(0); // xp won
+    resp.add_val(if left_hp > 0 {
+        1337
+    } else {
+        0
+    }); // mushrooms
     resp.add_val(0); // honor won
     resp.add_val(0);
     resp.add_val(2); // rank pre

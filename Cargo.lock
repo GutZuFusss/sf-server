@@ -2143,7 +2143,7 @@ dependencies = [
 [[package]]
 name = "sf-api"
 version = "0.2.0"
-source = "git+https://github.com/the-marenga/sf-api.git?branch=simulation#cdacb44cba9c1c517e1738a04ba41ca8160a064d"
+source = "git+https://github.com/gutzufusss/sf-api.git?branch=main#3fe29d1bf89251e15a1abafbb157c0ad389461cc"
 dependencies = [
  "aho-corasick",
  "base64",
@@ -2171,6 +2171,7 @@ dependencies = [
  "axum-server",
  "base64",
  "clap",
+ "enum-map",
  "fastrand",
  "log",
  "num-derive",
