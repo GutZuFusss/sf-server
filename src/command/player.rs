@@ -5,7 +5,7 @@ use log::error;
 use num_traits::FromPrimitive;
 use enum_map::EnumMap;
 use sf_api::{
-    command::AttributeType, gamestate::character::{Class, Gender, Race}, misc::from_sf_string, simulate::{Battle, BattleFighter, BattleSide, ClassEffect, Element, EquipmentEffects}
+    command::AttributeType, gamestate::character::{Class, Gender, Race}, misc::from_sf_string, simulate::{Battle, BattleFighter, BattleSide, ClassEffect, Element, EquipmentEffects, UpgradeableFighter}
 };
 use sqlx::Sqlite;
 
@@ -811,12 +811,47 @@ pub(crate) async fn player_arena_fight(
         .fetch_one(db)
         .await?;
 
-        // Player a info
+        let mut our_attributes: EnumMap<AttributeType, u32> = EnumMap::default();
+        our_attributes[AttributeType::Strength] = fighter.strength as u32;
+        our_attributes[AttributeType::Dexterity] = fighter.dexterity as u32;
+        our_attributes[AttributeType::Intelligence] = fighter.intelligence as u32;
+        our_attributes[AttributeType::Constitution] = fighter.stamina as u32;
+        our_attributes[AttributeType::Luck] = fighter.luck as u32;
+
+        let our_weapon = (100, 200);
+        let our_equip = EquipmentEffects {
+            element_res: EnumMap::default(),
+            element_dmg: EnumMap::default(),
+            weapon: our_weapon,
+            offhand: (0, 0),
+            reaction_boost: false,
+            extra_crit_dmg: false,
+            armor: 0,
+        };
+        let mut our_fighter = BattleFighter {
+            level: fighter.level as u16,
+            is_companion: false,
+            class: Class::from_i64(fighter.class).unwrap(),
+            attributes: our_attributes,
+            max_hp: starting_hp,
+            current_hp: starting_hp,
+            equip: our_equip,
+            rounds_in_battle: 0,
+            class_effect: ClassEffect::Normal,
+            portal_dmg_bonus: 1.0,
+        };
+
+        let max_hp = our_fighter.hit_points(&our_attributes, false, 1, 0);
+        our_fighter.max_hp = max_hp;
+        our_fighter.current_hp = max_hp;
+        battle_fighters.push(our_fighter);
+
+        // Player info
         resp.add_val(fighter.pid);
         resp.add_str(&fighter.name);
         resp.add_val(fighter.level);
-        resp.add_val(starting_hp); // TODO: Calc their hp
-        resp.add_val(starting_hp); // TODO: Calc their hp
+        resp.add_val(max_hp);
+        resp.add_val(max_hp);
         resp.add_val(fighter.strength); // str
         resp.add_val(fighter.dexterity); // dex
         resp.add_val(fighter.intelligence); // int
@@ -837,7 +872,7 @@ pub(crate) async fn player_arena_fight(
         resp.add_val(fighter.class);
         // Dont know, don't care (yet)
         resp.add_val(185204737);
-        resp.add_val(327703);
+        resp.add_val(327703); // item somehow. check epic: 327737
         resp.add_val(494);
         resp.add_val(962);
         resp.add_val(4);
@@ -852,38 +887,6 @@ pub(crate) async fn player_arena_fight(
         for _ in 0..12 {
             resp.add_val(0);
         }
-
-        let mut our_attributes: EnumMap<AttributeType, u32> = EnumMap::default();
-        our_attributes[AttributeType::Strength] = fighter.strength as u32;
-        our_attributes[AttributeType::Dexterity] = fighter.dexterity as u32;
-        our_attributes[AttributeType::Intelligence] = fighter.intelligence as u32;
-        our_attributes[AttributeType::Constitution] = fighter.stamina as u32;
-        our_attributes[AttributeType::Luck] = fighter.luck as u32;
-
-        let our_weapon = (100, 200);
-        let our_equip = EquipmentEffects {
-            element_res: EnumMap::default(),
-            element_dmg: EnumMap::default(),
-            weapon: our_weapon,
-            offhand: (0, 0),
-            reaction_boost: false,
-            extra_crit_dmg: false,
-            armor: 0,
-        };
-        let our_fighter = BattleFighter {
-            level: fighter.level as u16,
-            is_companion: false,
-            class: Class::from_i64(fighter.class).unwrap(),
-            attributes: our_attributes,
-            max_hp: starting_hp,
-            current_hp: starting_hp,
-            equip: our_equip,
-            rounds_in_battle: 0,
-            class_effect: ClassEffect::Normal,
-            portal_dmg_bonus: 1.0,
-        };
-
-        battle_fighters.push(our_fighter);
     }
 
     resp.add_key("fight.r");
